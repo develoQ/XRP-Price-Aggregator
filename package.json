@@ -5,7 +5,7 @@
   "description": "Fetches XRP (USD) prices from multiple data sources, filters out based on stdev",
   "main": "src/index.js",
   "scripts": {
-    "dev": "DEBUG=oracle* nodemon src/index.js"
+    "dev": "DEBUG=oracle* node src/index.js"
   },
   "author": "Wietse Wind <w@xrpl-labs.com>",
   "license": "MIT",
@@ -15,6 +15,8 @@
   },
   "dependencies": {
     "dotenv": "^8.2.0",
+    "rippled-ws-client": "^1.6.3",
+    "rippled-ws-client-sign": "^0.3.0",
     "node-fetch": "^2.6.1",
     "stats-analysis": "^2.0.0"
   }

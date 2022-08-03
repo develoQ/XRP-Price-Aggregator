@@ -1,6 +1,7 @@
-import oracle from '../src/index.js'
-
+import oracle from '../src/aggregator.js'
 ;(async () => {
-  const data = await oracle
-  console.log(data.filteredMedian)
+  setInterval(async () => {
+    const data = await oracle('jpy')
+    console.log(data.rawResultsNamed)
+  }, 60 * 1000)
 })()

@@ -1,72 +1,86 @@
 import debug from 'debug'
-import stats from 'stats-analysis'
+import aggregator from './aggregator.js'
+import Conn from 'rippled-ws-client'
+import Sign from 'rippled-ws-client-sign'
+import dotenv from 'dotenv'
 
-import Bitstamp from './providers/Bitstamp.js'
-import Kraken from './providers/Kraken.js'
-import Cryptowatch from './providers/Cryptowatch.js'
-import Bitfinex from './providers/Bitfinex.js'
-import Hitbtc from './providers/Hitbtc.js'
-import Binance from './providers/Binance.js'
+const log = debug('oracle:persist')
 
-const Providers = {
-  class: {Cryptowatch, Bitstamp, Kraken, Bitfinex, Hitbtc, Binance},
-  instances: {}
+const timeoutSec = process.env.TIMEOUT_SECONDS || 55
+const timeout = setTimeout(() => {
+  log(`Error, killed by timeout after ${timeoutSec} seconds`)
+  process.exit(1)
+}, timeoutSec * 1000)
+
+const run = (async () => {
+  dotenv.config()
+  log(`START`)
+  const Connection = new Conn(process.env.ENDPOINT)
+
+  log(`START (timeout at ${timeoutSec}), GO GET DATA!`)
+
+  const data = await aggregator(process.env.CURRENCY)
+  log('GOT DATA')
+  log({data})
+
+  await Connection
+
+  const Memos = Object.keys(data.rawResultsNamed).map((k) => {
+    return {
+      Memo: {
+        MemoData: Buffer.from(data.rawResultsNamed[k].map((_v) => String(_v)).join(';'), 'utf-8')
+          .toString('hex')
+          .toUpperCase(),
+        MemoFormat: Buffer.from('text/csv', 'utf-8').toString('hex').toUpperCase(),
+        MemoType: Buffer.from('rates:' + k, 'utf-8')
+          .toString('hex')
+          .toUpperCase()
+      }
+    }
+  })
+
+  const Tx = {
+    TransactionType: 'TrustSet',
+    Account: process.env.XRPL_SOURCE_ACCOUNT,
+    Fee: '10',
+    Flags: 131072,
+    LimitAmount: {
+      currency: process.env.CURRENCY.toUpperCase(),
+      issuer: process.env.XRPL_DESTINATION_ACCOUNT,
+      value: String(Math.round(parseFloat(data.filteredMedian)*100000) / 100000)
+    },
+    Memos
+  }
+
+  log('SIGN & SUBMIT')
+  try {
+    const Signed = await new Sign(Object.assign({}, Tx), process.env.XRPL_SOURCE_ACCOUNT_SECRET, await Connection)
+    log({Signed})
+  } catch (e) {
+    log(`Error signing / submitting: ${e.message}`)
+  }
+
+  if (typeof process.env.ENDPOINT_TESTNET !== 'undefined') {
+    log('SIGN & SUBMIT TESTNET')
+    const ConnectionTestnet = await new Conn(process.env.ENDPOINT_TESTNET)
+    log('ConnectionTestnet')
+    try {
+      const SignedTestnet = await new Sign(
+        Object.assign({}, Tx),
+        process.env.XRPL_SOURCE_ACCOUNT_SECRET,
+        await ConnectionTestnet
+      )
+      log({SignedTestnet})
+    } catch (e) {
+      log(`Error signing / submitting @ Testnet: ${e.message}`)
+    }
+    ;(await ConnectionTestnet).close()
+  }
+
+  log('WRAP UP')
+  ;(await Connection).close()
+  clearTimeout(timeout)
+})
+async () => {
+  run().then()
 }
-
-const log = debug('oracle:main')
-
-export default (async () => {  
-  Object.assign(Providers.instances, Object.keys(Providers.class).reduce((a, providerKey) => {
-    Object.assign(a, {
-      [providerKey]: new Providers.class[providerKey]
-    })
-    return a
-  }, {}))
-
-  const results = await Promise.all(Object.keys(Providers.instances).map(async instanceName => {
-    log(`  - Getting from ${instanceName}`)
-    const data = await Providers.instances[instanceName].getMultiple(
-      Number(process.env.ORACLE_PROVIDER_CALL_COUNT || 3),
-      Number(process.env.ORACLE_PROVIDER_CALL_DELAY_SEC || 2) * 1000
-    )
-    log(`     - Got data from ${instanceName}`)
-    return data
-  }))
-
-  const rawResultsNamed = results.reduce((a, b, i) => {
-    Object.assign(a, {
-      [Object.keys(Providers.instances)[i]]: b
-    })
-    return a
-  }, {})
-  
-  const rawResults = results.reduce((a, b) => a.concat(b), [])
-  const rawMedian = stats.median(rawResults)
-  const rawStdev = stats.stdev(rawResults)
-
-  const raw = {
-    rawResultsNamed,
-    rawResults,
-    rawMedian,
-    rawStdev
-  }
-
-  log(raw)
-
-  const filteredResults = rawResults.filter(r => Math.abs(r - rawMedian) < rawStdev)
-  const filteredMedian = stats.median(filteredResults)
-  const filteredMean = stats.mean(filteredResults)
-  
-  const filtered = {
-    filteredResults,
-    filteredMedian,
-    filteredMean
-  }
-
-  log(filtered)
-
-  return {
-    ...raw,
-    ...filtered
-  }
-})()
