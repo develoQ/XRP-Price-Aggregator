@@ -81,6 +81,12 @@ const run = (async () => {
   ;(await Connection).close()
   clearTimeout(timeout)
 })
-async () => {
-  run().then()
+
+
+;(async () => {
+  run().then(() => {})
+})()
+
+export const handler = async ()=> {
+  await run()
 }
